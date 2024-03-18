@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+import numpy as np
 import pyromat as pm
 h20 = pm.get('mp.H2O')
 r134a = pm.get('mp.C2H2F4')
@@ -13,6 +15,19 @@ def get_cooling_tower_return_temperature(wet_bulb_temperature, temperature_reduc
     e = -0.0159268
     f = -0.015954
     return a + b*Twb + c*Tr + d*Twb**2 + e*Tr**2 + f*Tr*Twb
+
+
+def ts_diagram(fluid, states):
+    Tc, pc = fluid.critical()
+    T = np.linspace(-200.0, Tc, 1001)
+    plt.plot(fluid.s(x=0, T=T), T, '-k')
+    plt.plot(fluid.s(x=1, T=T), T, '-k')
+    for i in range(len(states)):
+        plt.plot([states[i - 1]['s'], states[i]['s']], [states[i - 1]['T'], states[i]['T']], '--r')
+        plt.scatter(states[i]['s'], states[i]['T'], edgecolor='k', color='r')
+    plt.ylabel('Temperature (%s)' % pm.config['unit_temperature'])
+    plt.xlabel('Entropy (%s/%s-%s)' % (pm.config['unit_energy'], pm.config['unit_temperature'], pm.config['unit_mass']))
+    plt.show()
 
 
 def model_chiller(
@@ -69,6 +84,9 @@ def model_chiller(
     state_2 = fluid.state(T=T2, s=state_1['s'])                 # I'm assuming s2=s1 todo: verify this
     state_3 = fluid.state(x=0, p=state_2['p'])                  # We're assuming p3=p2
     state_4 = fluid.state(T=T4, h=state_3['h'])                 # We're assuming h4=h3 todo: verify this
+
+    # Make a T-s diagram
+    ts_diagram(fluid, [state_1, state_2, state_3, state_4])
 
     # Calculate the chiller mass flow rate
     chiller_mass_flow_rate = Qin / (state_1['h'] - state_4['h'])
