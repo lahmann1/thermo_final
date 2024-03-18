@@ -3,7 +3,7 @@ h20 = pm.get('mp.H2O')
 r134a = pm.get('mp.C2H2F4')
 
 
-def get_cooling_tower_temperature(wet_bulb_temperature, temperature_reduction):
+def get_cooling_tower_return_temperature(wet_bulb_temperature, temperature_reduction):
     Twb = wet_bulb_temperature
     Tr = temperature_reduction
     a = 16.790751
@@ -17,41 +17,65 @@ def get_cooling_tower_temperature(wet_bulb_temperature, temperature_reduction):
 
 def model_chiller(
         fluid,
-        wet_bulb_temperature=70.0,
-        primary_supply_temperature=40.0,
-        condenser_temperature_difference=10.0,
-        evaporator_temperature_difference=10.0,
-        volume_flow_rate=3.0
+        wet_bulb_temperature=70.0,              # Twb
+        primary_supply_temperature=40.0,        # Tch
+        condenser_temperature_reduction=10.0,   # todo: verify this
+        chilled_water_temperature_drop=10.0,
+        chiller_tons=1.0,
+        cooling_tower_flow_rate_gpm=3.0,
+        evaporator_effectiveness=0.8,
+        condenser_effectiveness=0.8
 ):
     # Set the units
     pm.config['unit_temperature'] = 'F'
+    print(pm.config)
 
-    # Calculate the mass flow rate
-    volume_flow_rate *= 6.309e-5        # gal / min to m^3 / s
-    mass_flow_rate = fluid.d() * volume_flow_rate
-    print(fluid.d())
-    print(mass_flow_rate)
+    # Get the Q from the evaporator (this is our design point)
+    Qin = chiller_tons * 3.5168528421                                   # kW
 
+    # Get the chilled water temperatures
+    Tch_out = primary_supply_temperature
+    Tch_in = Tch_out + chilled_water_temperature_drop
 
-    # Get the cooling tower temperature
-    cooling_tower_temperature = get_cooling_tower_temperature(wet_bulb_temperature, condenser_temperature_difference)
+    # Calculate the mass flow rate of the chilled water
+    Tch_avg = 0.5 * (Tch_out + Tch_in)
+    m_ch = Qin / (h20.cp(T=Tch_avg) * (Tch_in - Tch_out))               # kg/s
 
-    # Get the temperatures within the chiller
-    T1 = primary_supply_temperature - evaporator_temperature_difference
-    T3 = cooling_tower_temperature + condenser_temperature_difference
+    # Let's assume Cmin = mcp_ch (todo: verify this)
+    c_min_evap = m_ch * h20.cp(T=Tch_avg)
+
+    # Calculate T4 based on the effectiveness of the evaporator
+    T4 = Tch_in - Qin / evaporator_effectiveness / c_min_evap
+
+    # Get the cooling tower temperatures
+    Tct_in = get_cooling_tower_return_temperature(wet_bulb_temperature, condenser_temperature_reduction)
+    Tct_out = Tct_in + condenser_temperature_reduction
+
+    # Convert cooling tower flow rate to a mass flow rate
+    Tct_avg = 0.5 * (Tct_in + Tct_out)
+    m_ct = cooling_tower_flow_rate_gpm * h20.d(T=Tct_avg) * 6.309e-5    # kg/s
+
+    # Calculate Qout
+    Qout = m_ct * h20.cp(T=Tct_avg) * (Tct_out - Tct_in)                # kW
+
+    # Let's assume Cmin = mcp_ct (todo: verify this)
+    c_min_cond = m_ct * h20.cp(T=Tct_avg)
+
+    # Calculate T2 based on the effectiveness of the condenser
+    T2 = Tct_in + Qout / condenser_effectiveness / c_min_cond
 
     # Get the state info
-    state_1 = fluid.state(x=1, T=T1)                            # Before the compressor
-    state_3 = fluid.state(x=0, T=T3)                            # Before the condenser
-    state_2 = fluid.state(p=state_3['p'], s=state_1['s'])       # Before the expansion
-    state_4 = fluid.state(p=state_1['p'], s=state_3['s'])       # Before the evaporator
+    state_1 = fluid.state(x=1, T=T4)                            # We're assuming T1=T4
+    state_2 = fluid.state(T=T2, s=state_1['s'])                 # I'm assuming s2=s1 todo: verify this
+    state_3 = fluid.state(x=0, p=state_2['p'])                  # We're assuming p3=p2
+    state_4 = fluid.state(T=T4, h=state_3['h'])                 # We're assuming h4=h3 todo: verify this
 
-    print(fluid.d(p=state_1['p']))
-    print(fluid.d(p=state_3['p']))
+    # Calculate the chiller mass flow rate
+    chiller_mass_flow_rate = Qin / (state_1['h'] - state_4['h'])
 
     # Calculate the work
-    work = mass_flow_rate * (state_1['h'] - state_4['h'])
-    print(work)
+    chiller_work = chiller_mass_flow_rate * (state_2['h'] - state_1['h'])
+    print(chiller_work)
 
 
 def main():
